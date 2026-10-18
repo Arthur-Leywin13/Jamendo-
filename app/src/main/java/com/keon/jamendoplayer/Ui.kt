@@ -1,4 +1,3 @@
-
 package com.keon.jamendoplayer
 
 import android.Manifest
@@ -653,5 +652,5 @@ private fun MiniPlayer(vm: AppViewModel, t: Track, onOpen: () -> Unit) {
                 if (playing) "Pause" else "Lecture"
             )
         }
-
-        IconButt
+    }
+}
