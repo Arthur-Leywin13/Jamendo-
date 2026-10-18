@@ -1,0 +1,18 @@
+package com.keon.jamendoplayer
+
+data class Track(
+    val id: String,
+    val title: String,
+    val artist: String,
+    val album: String,
+    val duration: Int, // secondes
+    val image: String,
+    val audio: String,
+)
+
+sealed interface Load<out T> {
+    data object Idle : Load<Nothing>
+    data object Loading : Load<Nothing>
+    data class Ok<T>(val data: T) : Load<T>
+    data class Err(val message: String) : Load<Nothing>
+}
