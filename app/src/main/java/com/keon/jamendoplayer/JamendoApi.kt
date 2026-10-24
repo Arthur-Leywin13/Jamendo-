@@ -1,10 +1,12 @@
 package com.keon.jamendoplayer
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import org.json.JSONException
 import org.json.JSONObject
 import java.io.IOException
 import java.util.concurrent.TimeUnit
@@ -17,6 +19,7 @@ object JamendoApi {
     private val client = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(15, TimeUnit.SECONDS)
+        .callTimeout(25, TimeUnit.SECONDS)
         .build()
 
     suspend fun popular(id: String) = fetch(id, mapOf("order" to "popularity_week"))
@@ -40,11 +43,16 @@ object JamendoApi {
             try {
                 client.newCall(Request.Builder().url(url).build()).execute().use { r ->
                     val body = r.body?.string().orEmpty()
-                    if (!r.isSuccessful) throw ApiException("Erreur Jamendo (${r.code}).")
+                    if (!r.isSuccessful) throw ApiException("Erreur Jamendo (HTTP ${r.code}).")
+                    if (body.isBlank()) throw ApiException("Jamendo a renvoyé une réponse vide.")
                     parse(body)
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: IOException) {
                 throw ApiException("Connexion réseau indisponible. Vérifie ta connexion.")
+            } catch (e: JSONException) {
+                throw ApiException("Réponse invalide reçue de Jamendo. Réessaie plus tard.")
             }
         }
 
@@ -55,7 +63,8 @@ object JamendoApi {
             val msg = headers.optString("error_message").ifBlank { "Requête refusée" }
             throw ApiException("Jamendo : $msg")
         }
-        val arr = root.optJSONArray("results") ?: return emptyList()
+        val arr = root.optJSONArray("results")
+            ?: throw ApiException("Format de réponse Jamendo inattendu.")
         val out = ArrayList<Track>()
         for (i in 0 until arr.length()) {
             val o = arr.optJSONObject(i) ?: continue
