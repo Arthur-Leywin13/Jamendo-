@@ -12,6 +12,8 @@ import androidx.media3.common.Player
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import com.google.common.util.concurrent.ListenableFuture
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 
@@ -41,6 +43,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     val playerError = MutableStateFlow<String?>(null)
 
     private val known = HashMap<String, Track>()
+    private val loadJobs = HashMap<MutableStateFlow<Load<List<Track>>>, Job>()
     private var controller: MediaController? = null
     private val future: ListenableFuture<MediaController>
 
@@ -91,14 +94,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private fun cid() = clientId.value.ifBlank { BuildConfig.JAMENDO_CLIENT_ID }
 
     private fun launchLoad(target: MutableStateFlow<Load<List<Track>>>, block: suspend () -> List<Track>) {
+        loadJobs[target]?.cancel()
         target.value = Load.Loading
-        viewModelScope.launch {
-            target.value = try {
-                Load.Ok(block().also { list -> list.forEach { known[it.id] = it } })
+        loadJobs[target] = viewModelScope.launch {
+            try {
+                val list = block()
+                target.value = Load.Ok(list.also { tracks -> tracks.forEach { known[it.id] = it } })
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: ApiException) {
-                Load.Err(e.message ?: "Erreur")
+                target.value = Load.Err(e.message ?: "Erreur")
             } catch (e: Exception) {
-                Load.Err("Erreur inattendue.")
+                target.value = Load.Err("Erreur inattendue. Réessaie.")
             }
         }
     }
@@ -118,7 +125,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun search(query: String) {
         val q = query.trim()
-        if (q.isEmpty()) return
+        if (q.isEmpty()) {
+            loadJobs[results]?.cancel()
+            results.value = Load.Idle
+            return
+        }
         launchLoad(results) { JamendoApi.search(cid(), q) }
     }
 
@@ -189,6 +200,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun setClientId(v: String) {
         prefs.clientId = v.trim()
         clientId.value = v.trim()
+        loadJobs.values.forEach { it.cancel() }
+        loadJobs.clear()
         popular.value = Load.Idle
         newest.value = Load.Idle
         genreTracks.value = Load.Idle
@@ -196,6 +209,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     override fun onCleared() {
+        loadJobs.values.forEach { it.cancel() }
+        loadJobs.clear()
         controller?.removeListener(listener)
         MediaController.releaseFuture(future)
         super.onCleared()
